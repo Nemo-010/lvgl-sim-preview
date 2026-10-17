@@ -1,0 +1,136 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  preview:
+    name: preview ${{ matrix.board }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The board the whole thing was built against: a 128x64 monochrome
+          # SSD1306 on I2C, with two real buttons.
+          - board: frdm_mcxa156
+            app: examples/render-probe
+            monochrome: "true"
+          # A colour panel, to prove the sink is not mono-only.
+          - board: native_sim
+            app: examples/render-probe
+            monochrome: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build device-tree-compiler \
+            python3 python3-pip python3-venv gperf ccache
+
+      - name: Install west and the Python requirements
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install west
+          # Zephyr's own build scripts need these. They are listed explicitly
+          # rather than via `west packages pip` so a Zephyr change cannot make
+          # this workflow install a toolchain we do not want.
+          pip install pyelftools PyYAML pykwalify jsonschema packaging psutil \
+                      intelhex anytree tabulate semver pillow
+
+      - name: Fetch Zephyr
+        run: |
+          . .venv/bin/activate
+          west init -m https://github.com/zephyrproject-rtos/zephyr --mr main .
+          # The native simulator needs no HAL, but the devicetree of a real board
+          # does. `--narrow` keeps this from pulling the whole world.
+          west update --narrow -o=--depth=1
+          west zephyr-export
+
+      - name: Install this package
+        run: |
+          . .venv/bin/activate
+          pip install -e .
+
+      - name: Build and run the preview
+        id: run
+        env:
+          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
+        run: |
+          . .venv/bin/activate
+          mkdir -p artifacts
+          if [ "${{ matrix.board }}" = "native_sim" ]; then
+            TARGET=""
+          else
+            TARGET="--target-board ${{ matrix.board }}"
+          fi
+          # shellcheck disable=SC2086
+          lvgl-preview run ${{ matrix.app }} $TARGET \
+            --build-dir build-${{ matrix.board }} \
+            --timeout 120 \
+            -o artifacts/frame-${{ matrix.board }}.png --scale 4 \
+            | tee artifacts/log-${{ matrix.board }}.txt
+
+      - name: Prove the input path reaches the application
+        env:
+          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
+        run: |
+          . .venv/bin/activate
+          if [ "${{ matrix.board }}" = "frdm_mcxa156" ]; then
+            # 11 is INPUT_KEY_0: the MCXA156's User SW2. The probe app echoes the
+            # raw key, so this fails if host input stops reaching LVGL.
+            lvgl-preview drive ${{ matrix.app }} --target-board ${{ matrix.board }} \
+              --build-dir build-${{ matrix.board }} \
+              --timeout 120 --keys 11,11 --settle 0.7 \
+              -o artifacts/driven-${{ matrix.board }}.png --scale 4 \
+              | tee artifacts/drive-log-${{ matrix.board }}.txt
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-${{ matrix.board }}
+          path: artifacts/
+          if-no-files-found: error
+
+  pages:
+    name: publish
+    needs: preview
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble the site
+        run: |
+          mkdir -p site/artifacts
+          cp -r artifacts/*/. site/artifacts/
+          cp site-template/index.html site/index.html
+          cp site-template/style.css site/style.css
+          # Record which commit produced these frames.
+          echo "${{ github.sha }}" > site/artifacts/commit.txt
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

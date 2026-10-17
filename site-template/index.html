@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lvgl-preview - live captures from CI</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>lvgl-preview</h1>
+    <p class="lede">
+      Every image below was produced by a GitHub Actions run of this repository:
+      Zephyr was built for the native simulator, an LVGL application ran against
+      a capture sink, and the frames were read back out of the shared buffer.
+      Nothing here is a mock-up.
+    </p>
+  </header>
+
+  <section>
+    <h2>128x64 monochrome OLED</h2>
+    <p class="meta">
+      Target board <code>frdm_mcxa156</code>. The panel geometry, pixel format
+      and button codes were read from that board's devicetree, so the emulated
+      panel is the real one: an SSD1306, 1bpp, vertically tiled, bit 7 first.
+    </p>
+    <div class="pair">
+      <figure>
+        <img src="artifacts/frame-frdm_mcxa156.png" alt="Captured 128x64 monochrome frame" width="512" height="256">
+        <figcaption>As rendered. Nearest-neighbour, 4x.</figcaption>
+      </figure>
+      <figure>
+        <img src="artifacts/driven-frdm_mcxa156.png" alt="Captured frame after host input" width="512" height="256">
+        <figcaption>
+          After the host pressed button code 11 twice. The application echoes
+          the raw key, so this image proves input reached the device.
+        </figcaption>
+      </figure>
+    </div>
+    <details>
+      <summary>Run log</summary>
+      <pre id="log-mono">artifacts/log-frdm_mcxa156.txt</pre>
+    </details>
+  </section>
+
+  <section>
+    <h2>A colour panel, same sink</h2>
+    <p class="meta">
+      The same capture sink against the simulator's own 320x240 ARGB8888
+      display. The sink is not monochrome-specific: it forwards whatever the
+      panel driver declares.
+    </p>
+    <figure>
+      <img src="artifacts/frame-native_sim.png" alt="Captured colour frame" width="640" height="480">
+      <figcaption>320x240 ARGB8888, 2x.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <ul>
+      <li>
+        The sink is a Zephyr <strong>display driver</strong>, so it needs no
+        changes to the application and works with any LVGL version.
+      </li>
+      <li>
+        It captures what <code>display_write()</code> was handed, so the preview
+        is the real hardware path, not a parallel renderer.
+      </li>
+      <li>
+        Frames are published into a file-backed mapping. <code>seq</code> is
+        written last, so a reader never shows a torn frame.
+      </li>
+      <li>
+        Monochrome packing, bit order and polarity are resolved on the device
+        and stated in the frame header, because polarity is not derivable from
+        the pixel format alone.
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>
+      Frames from commit <code id="commit">unknown</code>.
+      <a href="https://github.com/Nemo-010/lvgl-sim-preview">Source</a>.
+    </p>
+  </footer>
+</main>
+<script>
+  fetch("artifacts/commit.txt").then(r => r.text())
+    .then(t => { document.getElementById("commit").textContent = t.trim(); })
+    .catch(() => {});
+  for (const el of document.querySelectorAll("pre[id^=log]")) {
+    const path = el.textContent;
+    fetch(path).then(r => r.text())
+      .then(t => { el.textContent = t; })
+      .catch(() => { el.textContent = "(log not available)"; });
+  }
+</script>
+</body>
+</html>
