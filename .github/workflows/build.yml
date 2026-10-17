@@ -60,21 +60,26 @@ jobs:
       - name: Fetch Zephyr
         run: |
           . .venv/bin/activate
+          # A west workspace is a sibling layout: `zephyr/` next to the
+          # manifest repo. Init inside a fresh directory rather than in the
+          # checkout, which already has files in it.
+          mkdir -p "$RUNNER_TEMP/ws" && cd "$RUNNER_TEMP/ws"
           west init -m https://github.com/zephyrproject-rtos/zephyr --mr main .
           # The native simulator needs no HAL, but the devicetree of a real board
           # does. `--narrow` keeps this from pulling the whole world.
           west update --narrow -o=--depth=1
           west zephyr-export
+          echo "ZEPHYR_BASE=$RUNNER_TEMP/ws/zephyr" >> "$GITHUB_ENV"
 
       - name: Install this package
         run: |
           . .venv/bin/activate
           pip install -e .
+          # A west workspace's zephyr/ is not a manifest repo, so `west` is only
+          # needed for fetching. The build finds Zephyr through ZEPHYR_BASE.
 
       - name: Build and run the preview
         id: run
-        env:
-          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
         run: |
           . .venv/bin/activate
           mkdir -p artifacts
@@ -91,8 +96,6 @@ jobs:
             | tee artifacts/log-${{ matrix.board }}.txt
 
       - name: Prove the input path reaches the application
-        env:
-          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
         run: |
           . .venv/bin/activate
           if [ "${{ matrix.board }}" = "frdm_mcxa156" ]; then
