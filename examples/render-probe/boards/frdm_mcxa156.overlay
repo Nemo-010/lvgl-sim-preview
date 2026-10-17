@@ -1,0 +1,48 @@
+/*
+ * The panel this example targets on real hardware: a 128x64 SSD1306 on I2C3.
+ *
+ * The preview does not need this file to be read by the simulator; it reads the
+ * *target* board's devicetree to learn the panel geometry and buttons, then
+ * reproduces them. This is the same shape as a real application's overlay.
+ */
+
+/ {
+	chosen {
+		zephyr,display = &ssd1306_128x64;
+	};
+};
+
+&pinctrl {
+	pinmux_lpi2c3: pinmux_lpi2c3 {
+		group0 {
+			pinmux = <LPI2C3_SDA_P3_28>, <LPI2C3_SCL_P3_27>;
+			slew-rate = "fast";
+			drive-strength = "low";
+			input-enable;
+			bias-pull-up;
+			drive-open-drain;
+		};
+	};
+};
+
+&lpi2c3 {
+	status = "okay";
+	pinctrl-0 = <&pinmux_lpi2c3>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	ssd1306_128x64: ssd1306@3c {
+		status = "okay";
+		compatible = "solomon,ssd1306";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <0>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+	};
+};

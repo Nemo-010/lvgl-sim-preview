@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build-preview/
+build/
+frame*.png
+lvgl_preview_*.bin
+lvgl_preview_manifest.json
+.pixi/

@@ -1,0 +1,10 @@
+name: lvgl-preview
+build:
+  # The CMakeLists.txt and Kconfig are both under zephyr/, which is the default,
+  # so neither `cmake` nor `kconfig` has to be spelled out.
+  depends:
+    - lvgl
+  settings:
+    # Makes this module's dts/bindings directory part of the devicetree binding
+    # search path, so `lvgl,preview-sink` resolves like any in-tree binding.
+    dts_root: .

@@ -1,0 +1,44 @@
+/*
+ * lvgl_preview.overlay - drop-in devicetree overlay for the LVGL preview sink.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * This file is deliberately generic. It makes no assumption about the board,
+ * the panel, its resolution, its bus or its driver. Pass it to Zephyr as an
+ * extra devicetree overlay on top of whatever the project already uses;
+ * nothing in the project has to be edited.
+ *
+ * What it does
+ * ------------
+ *   - adds an `lvgl,preview-sink` node
+ *   - re-points `zephyr,display` at the sink
+ *
+ * The sink is a display controller, so LVGL, the LVGL input glue and the
+ * application are untouched: they still render to and read from the chosen
+ * display, which is now the sink.
+ *
+ * How the panel is found
+ * ----------------------
+ * Not here. The sink looks for the other enabled node of the `display` class
+ * at runtime, reads its resolution and pixel format, and forwards the captured
+ * pixels to it. That is what lets this overlay stay free of board knowledge:
+ * there is no phandle, no width and no height to keep in sync, because the
+ * sink asks the panel instead of being told about it.
+ *
+ * Because no width or height is given here, the sink has no compile-time
+ * geometry. LVGL must therefore be configured for dynamic rendering buffers
+ * (CONFIG_LV_Z_BUFFER_ALLOC_DYNAMIC), which is what the preview tooling sets.
+ * A project that insists on static buffers has to state the size on the sink
+ * node itself, and the tooling says so rather than leaving an empty window.
+ */
+
+/ {
+	lvgl_preview_sink: lvgl_preview_sink {
+		compatible = "lvgl,preview-sink";
+		status = "okay";
+	};
+
+	chosen {
+		zephyr,display = &lvgl_preview_sink;
+	};
+};

@@ -1,0 +1,7 @@
+/*
+ * Nothing is needed here.
+ *
+ * The buttons this example reacts to come from the *target* board's devicetree
+ * and are reproduced by the preview's generated overlay. Declaring more of them
+ * here would make the preview show buttons the real device does not have.
+ */

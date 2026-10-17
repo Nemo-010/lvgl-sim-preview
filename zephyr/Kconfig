@@ -1,0 +1,131 @@
+# Copyright (c) 2026 Nemo
+# SPDX-License-Identifier: Apache-2.0
+
+config LVGL_PREVIEW
+	bool "LVGL preview capture sink"
+	default y if DT_HAS_LVGL_PREVIEW_SINK_ENABLED
+	depends on DISPLAY
+	help
+	  Publish everything LVGL renders to a shared frame buffer that the
+	  desktop preview host can map and display.
+
+	  The sink is a display driver: LVGL renders into it, it copies the
+	  result into a shared memory mapping, and (unless disabled) it also
+	  forwards the same pixels to the display device it wraps, so real
+	  hardware keeps working while the preview is attached.
+
+if LVGL_PREVIEW
+
+config LVGL_PREVIEW_INIT_PRIORITY
+	int "Preview sink initialization priority"
+	default 90
+	help
+	  The sink must initialize after the panel it wraps, which sits at
+	  CONFIG_DISPLAY_INIT_PRIORITY, and before LVGL, which initializes at
+	  CONFIG_LV_Z_INIT_PRIORITY in the APPLICATION level.
+
+module = LVGL_PREVIEW
+module-str = lvgl-preview
+source "subsys/logging/Kconfig.template.log_config"
+
+config LVGL_PREVIEW_CAPTURE_PATH
+	string "Capture file path"
+	default "lvgl_preview_frame.bin"
+	help
+	  Path the preview host and the device agree on. Relative paths are
+	  resolved against the directory the application is started in.
+
+config LVGL_PREVIEW_INPUT_PATH
+	string "Input file path"
+	default "lvgl_preview_input.bin"
+	help
+	  Path of the host-to-device input ring.
+
+config LVGL_PREVIEW_MANIFEST_PATH
+	string "Manifest file path"
+	default "lvgl_preview_manifest.json"
+	help
+	  Path of the device manifest describing the display and the buttons
+	  that were found in devicetree.
+
+config LVGL_PREVIEW_MAP_FILE
+	bool "Publish frames through a file-backed mapping"
+	default y
+	help
+	  The only transport implemented today. Kept as an option so the
+	  transport can be swapped without touching the capture path.
+
+config LVGL_PREVIEW_TEE
+	bool "Forward captured pixels to the wrapped display"
+	default y
+	help
+	  Keep driving the real display while capturing. Turn this off to
+	  capture without touching the panel, which is useful when the panel
+	  is not attached.
+
+config LVGL_PREVIEW_MAX_PIXELS
+	int "Maximum captured pixels"
+	default 0
+	help
+	  Upper bound on the capture buffer, in pixels. 0 sizes the buffer
+	  from the display capabilities at runtime, which is what you want
+	  unless the capabilities are wrong.
+
+config LVGL_PREVIEW_INPUT
+	bool "Expose host input to LVGL"
+	default y if LVGL
+	depends on LVGL
+	help
+	  Create an LVGL input device fed by the preview host, so mouse,
+	  touch and key events from the desktop reach the application.
+
+config LVGL_PREVIEW_INPUT_DEVICE_NAME
+	string "Name of the preview input device"
+	default "lvgl_preview_input"
+
+config LVGL_PREVIEW_INPUT_QUEUE_SIZE
+	int "Preview input queue depth"
+	default 16
+
+config LVGL_PREVIEW_INPUT_INIT_PRIORITY
+	int "Preview input initialization priority"
+	depends on LVGL_PREVIEW_INPUT
+	default 91
+	help
+	  Must be greater than CONFIG_LV_Z_INIT_PRIORITY so that LVGL exists
+	  before the preview creates input devices.
+
+config LVGL_PREVIEW_INPUT_PRIORITY
+	int "Preview input polling thread priority"
+	depends on LVGL_PREVIEW_INPUT
+	default 5
+
+config LVGL_PREVIEW_INPUT_STACK_SIZE
+	int "Preview input polling thread stack size"
+	depends on LVGL_PREVIEW_INPUT
+	default 2048
+
+config LVGL_PREVIEW_PUBLISH_PERIOD_MS
+	int "Heartbeat period"
+	default 250
+	help
+	  How often the device refreshes the heartbeat field even when
+	  nothing is being rendered, so the host can tell a stalled device
+	  from a finished one.
+
+config LVGL_PREVIEW_DIAGNOSTICS
+	bool "Report capture diagnostics on the console"
+	default y
+	help
+	  Print the display geometry, pixel format, flush counts and frame
+	  rate. This is what tells you why a blank preview is blank.
+
+if LVGL_PREVIEW_DIAGNOSTICS
+
+config LVGL_PREVIEW_DIAGNOSTICS_PERIOD_MS
+	int "Diagnostics period"
+	default 2000
+
+endif # LVGL_PREVIEW_DIAGNOSTICS
+
+endif # LVGL_PREVIEW

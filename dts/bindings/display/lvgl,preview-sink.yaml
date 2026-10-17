@@ -1,0 +1,86 @@
+# Copyright (c) 2026 Nemo
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  LVGL preview capture sink.
+
+  A display controller that does not drive a panel of its own. It captures
+  what LVGL renders, publishes it to the desktop preview host, and forwards
+  the same pixels to the real panel.
+
+  The panel is found at runtime by looking for the other enabled node of the
+  `display` class, so this node carries no board-specific information and the
+  overlay that adds it stays generic. `width` and `height` are therefore
+  optional: they are read from the panel when it is attached, and only need to
+  be set when the sink runs without a panel at all.
+
+class: display
+
+compatible: "lvgl,preview-sink"
+
+include: base.yaml
+
+properties:
+  width:
+    type: int
+    description: |
+      Panel width in pixels.
+
+      Optional. When the panel is attached this is read from the panel, so a
+      generic overlay can leave it out. It must be set for a capture-only
+      sink, or for a project that builds LVGL with statically allocated
+      rendering buffers.
+
+  height:
+    type: int
+    description: |
+      Panel height in pixels. Optional, see `width`.
+
+  pixel-format:
+    type: int
+    default: 4
+    description: |
+      Pixel format to emulate when no panel driver is attached, as a
+      PANEL_PIXEL_FORMAT_* value. Without a panel the sink has nothing to mirror,
+      so this is how a monochrome 128x64 OLED is described.
+
+      Optional. Defaults to PANEL_PIXEL_FORMAT_MONO10 (4), which is what the
+      SSD1306 family expects.
+
+  mono-vtiled:
+    type: boolean
+    description: |
+      Emulated panel packs eight vertical pixels per byte, as SSD1306, SH1106 and
+      most 128x64 OLED controllers do. Only meaningful without a panel.
+
+  mono-msb-first:
+    type: boolean
+    description: |
+      Emulated panel treats bit 7 as the first pixel. Only meaningful without a
+      panel.
+
+  wrapped-display:
+    type: phandle
+    description: |
+      Panel that should also receive the captured pixels.
+
+      Optional, and normally left out: the sink finds the panel itself. Set it
+      only to pick one panel explicitly when a board has several.
+
+  capture-path:
+    type: string
+    description: |
+      Overrides CONFIG_LVGL_PREVIEW_CAPTURE_PATH for this instance.
+
+examples:
+  - |
+    preview_sink: preview_sink {
+            compatible = "lvgl,preview-sink";
+            status = "okay";
+    };
+
+    / {
+            chosen {
+                    zephyr,display = &preview_sink;
+            };
+    };
