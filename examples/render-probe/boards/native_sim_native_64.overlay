@@ -1,7 +1,18 @@
 /*
- * Nothing is needed here.
+ * Intentionally minimal.
  *
  * The buttons this example reacts to come from the *target* board's devicetree
  * and are reproduced by the preview's generated overlay. Declaring more of them
  * here would make the preview show buttons the real device does not have.
+ *
+ * The preview still needs this file to exist and to be valid devicetree, so the
+ * project's own overlay set is unchanged between the target build and the
+ * simulator build.
  */
+
+/ {
+	preview_note {
+		compatible = "zephyr,preview-note";
+		status = "disabled";
+	};
+};

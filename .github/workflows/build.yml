@@ -89,11 +89,12 @@ jobs:
             TARGET="--target-board ${{ matrix.board }}"
           fi
           # shellcheck disable=SC2086
+          set -o pipefail
           lvgl-preview run ${{ matrix.app }} $TARGET \
             --build-dir build-${{ matrix.board }} \
             --timeout 120 \
             -o artifacts/frame-${{ matrix.board }}.png --scale 4 \
-            | tee artifacts/log-${{ matrix.board }}.txt
+            2>&1 | tee artifacts/log-${{ matrix.board }}.txt
 
       - name: Prove the input path reaches the application
         run: |
@@ -101,11 +102,21 @@ jobs:
           if [ "${{ matrix.board }}" = "frdm_mcxa156" ]; then
             # 11 is INPUT_KEY_0: the MCXA156's User SW2. The probe app echoes the
             # raw key, so this fails if host input stops reaching LVGL.
+            set -o pipefail
             lvgl-preview drive ${{ matrix.app }} --target-board ${{ matrix.board }} \
               --build-dir build-${{ matrix.board }} \
               --timeout 120 --keys 11,11 --settle 0.7 \
               -o artifacts/driven-${{ matrix.board }}.png --scale 4 \
-              | tee artifacts/drive-log-${{ matrix.board }}.txt
+              2>&1 | tee artifacts/drive-log-${{ matrix.board }}.txt
+          fi
+
+      - name: Check the captures exist
+        run: |
+          set -e
+          ls -la artifacts/
+          test -s artifacts/frame-${{ matrix.board }}.png
+          if [ "${{ matrix.board }}" = "frdm_mcxa156" ]; then
+            test -s artifacts/driven-${{ matrix.board }}.png
           fi
 
       - name: Upload artifacts
