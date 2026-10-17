@@ -136,7 +136,10 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p site/artifacts
-          cp -r artifacts/*/. site/artifacts/
+          # Each artifact is downloaded into a directory named after it, so the
+          # files are one level deeper than they look.
+          find artifacts -type f -exec cp {} site/artifacts/ \;
+          ls -la site/artifacts/
           cp site-template/index.html site/index.html
           cp site-template/style.css site/style.css
           # Record which commit produced these frames.
