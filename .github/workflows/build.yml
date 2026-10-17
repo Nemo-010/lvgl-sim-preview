@@ -134,6 +134,8 @@ jobs:
     permissions:
       pages: write
       id-token: write
+      # download-artifact needs to read this run's artifacts.
+      actions: read
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
