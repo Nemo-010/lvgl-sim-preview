@@ -79,7 +79,14 @@ int main(void)
 		return 0;
 	}
 
+	/*
+	 * Blanking matters more than it looks. The sink reports it in the frame
+	 * header, and a display left blanked is exactly what a "my preview is
+	 * empty" report usually turns out to be. Print the result so a failure is
+	 * visible instead of silent.
+	 */
 	ret = display_blanking_off(display);
+	printk("render-probe: blanking off -> %d\n", ret);
 	if (ret < 0 && ret != -ENOSYS) {
 		printk("render-probe: blanking off failed (%d)\n", ret);
 	}
@@ -186,6 +193,14 @@ int main(void)
 			step = -step;
 		}
 		lv_bar_set_value(g_bar, value, LV_ANIM_OFF);
+
+		/*
+		 * Drive LVGL from the application, which is the ordinary LVGL
+		 * pattern. The preview also works when an application does not do
+		 * this (it enables CONFIG_LV_Z_RUN_LVGL_ON_WORKQUEUE), but doing it
+		 * here keeps the example honest and independent of that setting.
+		 */
+		lv_timer_handler();
 
 		k_sleep(K_MSEC(200));
 	}

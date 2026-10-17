@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .dts import TargetInfo, generate_overlay, read_target
+from .dts import PANEL_FORMATS, TargetInfo, generate_overlay, read_target
 
 # Repository root: src/lvgl_preview/build.py -> ../../
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +106,25 @@ def find_tool(name: str) -> str:
     return path
 
 
+# The LVGL colour format the build ended up with, as a short name.
+_COLOR_FORMATS = {
+    "CONFIG_LV_COLOR_FORMAT_I1": "MONO10",
+    "CONFIG_LV_COLOR_FORMAT_L8": "L8",
+    "CONFIG_LV_COLOR_FORMAT_RGB565": "RGB565",
+    "CONFIG_LV_COLOR_FORMAT_RGB565_SWAPPED": "RGB565_SWAPPED",
+    "CONFIG_LV_COLOR_FORMAT_RGB888": "RGB888",
+    "CONFIG_LV_COLOR_FORMAT_XRGB8888": "ARGB8888",
+    "CONFIG_LV_COLOR_FORMAT_ARGB8888": "ARGB8888",
+}
+
+
+def _lvgl_color_format(config: dict[str, str]) -> str | None:
+    for key, name in _COLOR_FORMATS.items():
+        if config.get(key) == "y":
+            return name
+    return None
+
+
 def read_kconfig(dot_config: Path) -> dict[str, str]:
     """Parse a Zephyr .config into a dict."""
     values: dict[str, str] = {}
@@ -190,8 +209,59 @@ def build(
         generated = out / "lvgl_preview_generated.overlay"
         generated.write_text(generate_overlay(target, overlay_path), encoding="utf-8")
         overlay_path = generated
+    else:
+        # No target board, so the sink wraps the simulator's own display. Read
+        # that board's devicetree too: its geometry and format are just as much
+        # a hardware fact as a real panel's, and the same code can size LVGL's
+        # buffers from it instead of guessing.
+        try:
+            sim_board = board.split("/", 1)[0]
+            target = read_target(app, sim_board, zb, out / "target-dts", env)
+        except Exception:  # noqa: BLE001 - optional, the build works without it
+            target = None
 
+    # LVGL's colour depth has to match the panel, or it renders in one format
+    # and the sink composites in another. It is a property of the hardware, so
+    # it is derived from the target's devicetree rather than asked of the user.
     config_args = list(FORCED_CONFIG) + list(extra_config or [])
+
+    # Work out the pixel format to emulate.
+    #
+    # With a target board, its devicetree decides. Without one, the sink wraps
+    # the simulator's own display, whose format is not known until the build
+    # has run, so the application's own choice is left alone and simply checked
+    # afterwards.
+    panel_monochrome: bool | None = None
+
+    if target is not None and target.display is not None:
+        panel_monochrome = target.display.monochrome
+    elif target is None:
+        # No target board: the sink wraps the simulator's own display, which
+        # native_sim defines as ARGB8888. LVGL has to render in that format or
+        # the flush callback it picks will not match the data it is handed, and
+        # nothing is ever drawn.
+        panel_monochrome = False
+
+    if panel_monochrome is not None:
+        bits = 1 if panel_monochrome else 32
+        config_args.append(f"CONFIG_LV_Z_BITS_PER_PIXEL={bits}")
+        config_args.append(
+            "CONFIG_LV_COLOR_FORMAT_I1=y" if bits == 1
+            else "CONFIG_LV_COLOR_FORMAT_ARGB8888=y"
+        )
+
+    # LVGL's rendering buffer comes out of its memory pool. A full-refresh
+    # ARGB8888 320x240 buffer is 300 KB, so an application that sized its pool
+    # for a 1 KB monochrome panel (which is what every OLED application does)
+    # fails to allocate and then never draws anything, silently, unless it
+    # happened to enable LVGL logging. That is indistinguishable from "LVGL is
+    # broken", so the preview sizes the pool from the panel it already read.
+    if target is not None and target.display is not None:
+        bytes_per_pixel = 1 if target.display.monochrome else 4
+        frame_bytes = target.display.width * target.display.height * bytes_per_pixel
+        # Two buffers plus room for the widget tree and font caches.
+        pool = max(32768, frame_bytes * 2 + 32768)
+        config_args.append(f"CONFIG_LV_Z_MEM_POOL_SIZE={pool}")
     config_fragment = out / "preview.conf"
     config_fragment.write_text("\n".join(config_args) + "\n", encoding="utf-8")
 
@@ -211,6 +281,12 @@ def build(
         f"-DZEPHYR_EXTRA_MODULES={ROOT}",
     ]
 
+    # LVGL 9.6 deprecates the LV_COLOR_DEPTH choice in favour of
+    # LV_COLOR_FORMAT_DEFAULT, and CONFIG_LV_COLOR_DEPTH_* no longer selects the
+    # format in Zephyr (see the 4.5 migration guide). LV_Z_COLOR_FORMAT is the
+    # board-level hook that provides the choice's default, so it is the one that
+    # can be set from a .conf fragment.
+
     proc = _run(configure, out, env)
     if proc.returncode != 0:
         raise BuildError(
@@ -228,6 +304,30 @@ def build(
                 f"the application forces {marker}, but the preview sink has no "
                 "compile-time geometry. Remove that setting, or state width and "
                 "height on the lvgl,preview-sink node in a project overlay."
+            )
+
+    # LVGL renders in the format the application asked for, and the sink
+    # composites in the format the *panel* wants. If those disagree, LVGL draws
+    # 16bpp into a 32bpp buffer and every frame is silently wrong: the classic
+    # "the preview is blank / garbled" failure. Refuse to run instead.
+    rendered = _lvgl_color_format(config)
+
+    if panel_monochrome is not None and rendered is not None:
+        expected = "MONO10" if panel_monochrome else "ARGB8888"
+        if rendered != expected:
+            raise BuildError(
+                f"the application asks LVGL to render in {rendered}, but the panel "
+                f"is {expected}. The sink captures what the panel would receive, so "
+                f"these have to agree.\n\n"
+                f"Either remove the colour-format setting from the project's "
+                f"prj.conf (it belongs in Kconfig.defconfig next to the panel it "
+                f"targets, not in the application), or pass the matching "
+                f"--config.\n\n"
+                f"Found in the build: "
+                + ", ".join(
+                    f"{k}=y" for k in config
+                    if k.startswith("CONFIG_LV_COLOR_FORMAT_") and config[k] == "y"
+                )
             )
 
     if config.get("CONFIG_LVGL_PREVIEW") != "y":

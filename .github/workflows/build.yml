@@ -7,6 +7,17 @@ on:
   workflow_dispatch:
 
 jobs:
+  unit:
+    name: unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pillow
+      - run: python -m pytest -q
+
   preview:
     name: preview ${{ matrix.board }}
     runs-on: ubuntu-24.04
