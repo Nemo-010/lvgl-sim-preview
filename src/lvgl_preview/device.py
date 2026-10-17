@@ -21,9 +21,16 @@ from .protocol import (
 )
 
 # The emulated display needs a video driver. `dummy` makes the device render
-# into its own buffers without opening a window, which is exactly what a
-# headless preview wants: the pixels still travel the full display API path.
+# into its own buffers without opening a window, which is what a headless
+# preview wants: the pixels still travel the full display API path.
+#
+# A video driver alone is not enough. SDL also picks a *render* driver, and its
+# default choice needs a GPU context, so in a container or on a CI runner it
+# fails with "Couldn't find matching render driver" and the device exits before
+# any application code runs. Naming the software renderer explicitly is what
+# makes a headless run work anywhere.
 DEFAULT_SDL_VIDEODRIVER = "dummy"
+DEFAULT_SDL_RENDER_DRIVER = "software"
 
 # How long to wait for the manifest before assuming there is not one.
 MANIFEST_TIMEOUT = 10.0
@@ -92,6 +99,7 @@ class Device:
 
         env = dict(os.environ)
         env.setdefault("SDL_VIDEODRIVER", DEFAULT_SDL_VIDEODRIVER)
+        env.setdefault("SDL_RENDER_DRIVER", DEFAULT_SDL_RENDER_DRIVER)
 
         cmd = [str(self.executable), "-no-rt", *list(extra_args or [])]
         self._proc = subprocess.Popen(
