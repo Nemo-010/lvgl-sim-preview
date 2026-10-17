@@ -199,26 +199,47 @@ def build(
 
     if target_board:
         try:
-            target = read_target(app, target_board, zb, out / "target-dts", env)
+            target = read_target(app, target_board, zb, out / f"target-dts-{target_board}", env)
         except Exception as exc:  # noqa: BLE001 - surfaced as a build error
             raise BuildError(
                 f"could not read the devicetree of target board "
                 f"'{target_board}': {exc}"
             ) from exc
+    else:
+        # No target board: emulate the simulator's own panel. Its geometry is
+        # just as much a hardware fact as a real panel's, so it is read the same
+        # way, and the same overlay generator runs.
+        sim_board = board.split("/", 1)[0]
 
-        generated = out / "lvgl_preview_generated.overlay"
+        try:
+            target = read_target(app, sim_board, zb, out / f"target-dts-{sim_board}", env)
+        except Exception:  # noqa: BLE001 - fall back to the plain overlay
+            target = None
+
+        if target is not None and target.display is None:
+            # native_sim declares its display in the board's devicetree but with
+            # no width/height, so fill in what the board actually advertises.
+            from .dts import PANEL_FORMATS, TargetDisplay
+
+            target.display = TargetDisplay(
+                node="sdl_dc",
+                label="simulator display",
+                compatible="zephyr,sdl-dc",
+                width=320,
+                height=240,
+                monochrome=False,
+                pixel_format=PANEL_FORMATS["ARGB8888"],
+            )
+
+    generated = out / "lvgl_preview_generated.overlay"
+
+    if target is not None:
         generated.write_text(generate_overlay(target, overlay_path), encoding="utf-8")
         overlay_path = generated
     else:
-        # No target board, so the sink wraps the simulator's own display. Read
-        # that board's devicetree too: its geometry and format are just as much
-        # a hardware fact as a real panel's, and the same code can size LVGL's
-        # buffers from it instead of guessing.
-        try:
-            sim_board = board.split("/", 1)[0]
-            target = read_target(app, sim_board, zb, out / "target-dts", env)
-        except Exception:  # noqa: BLE001 - optional, the build works without it
-            target = None
+        # Remove a stale overlay so a reused build directory cannot silently
+        # keep emulating the previous panel.
+        generated.unlink(missing_ok=True)
 
     # LVGL's colour depth has to match the panel, or it renders in one format
     # and the sink composites in another. It is a property of the hardware, so

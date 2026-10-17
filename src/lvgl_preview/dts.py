@@ -112,6 +112,13 @@ class TargetInfo:
 def _configure_for_dts(
     app: Path, board: str, zephyr_base: Path, out: Path, env: dict[str, str]
 ) -> str:
+    """Configure ``app`` for ``board`` and return its resolved devicetree.
+
+    ``out`` is a directory of its own per board. CMake caches the board in its
+    cache file, so reusing one directory for two boards silently returns the
+    first board's devicetree -- which is how a 320x240 colour run ended up
+    emulating a 128x64 OLED.
+    """
     """Run a configure that stops after devicetree generation.
 
     Only the devicetree is wanted, so this deliberately does not need a cross
@@ -281,11 +288,21 @@ def generate_overlay(info: TargetInfo, source_overlay: Path) -> str:
             ]
         lines += ["\t};", ""]
     else:
+        # No panel on the target board. On the simulator the sink still has to
+        # describe one, because SDL is disabled and there would otherwise be no
+        # display at all. 320x240 colour is what native_sim advertises.
         lines += [
             "\t/*",
-            "\t * The target board selects no display, so the preview runs on the",
-            "\t * simulator's own panel.",
+            "\t * The target board selects no display, so emulate the simulator's",
+            "\t * own panel: 320x240 colour.",
             "\t */",
+            "\tlvgl_preview_sink: lvgl_preview_sink {",
+            '\t\tcompatible = "lvgl,preview-sink";',
+            '\t\tstatus = "okay";',
+            "\t\twidth = <320>;",
+            "\t\theight = <240>;",
+            "\t\tpixel-format = <8>;",
+            "\t};",
             "",
         ]
 
@@ -310,15 +327,14 @@ def generate_overlay(info: TargetInfo, source_overlay: Path) -> str:
 
     lines += ["};", ""]
 
-    if info.display is not None:
-        lines += [
-            "/ {",
-            "\tchosen {",
-            "\t\tzephyr,display = &lvgl_preview_sink;",
-            "\t};",
-            "};",
-            "",
-        ]
+    lines += [
+        "/ {",
+        "\tchosen {",
+        "\t\tzephyr,display = &lvgl_preview_sink;",
+        "\t};",
+        "};",
+        "",
+    ]
 
     return "\n".join(lines)
 

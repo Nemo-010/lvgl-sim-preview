@@ -90,31 +90,6 @@ struct lvp_data {
 };
 
 /*
- * Every enabled node of the display class, this sink included. The panel is
- * whichever of them is not this device.
- */
-#define LVP_DISPLAY_CANDIDATE(node) DEVICE_DT_GET(node),
-
-static const struct device *lvp_find_panel(const struct device *self)
-{
-	static const struct device *const candidates[] = {
-		DT_FOREACH_CLASS_STATUS_OKAY(display, LVP_DISPLAY_CANDIDATE)
-		NULL,
-	};
-
-	for (size_t i = 0; i < ARRAY_SIZE(candidates); i++) {
-		if (candidates[i] == NULL) {
-			break;
-		}
-		if (candidates[i] != self) {
-			return candidates[i];
-		}
-	}
-
-	return NULL;
-}
-
-/*
  * Bytes per row of panel-bound data for a rectangle `width` pixels wide.
  *
  * The display API is inconsistent here: for monochrome and 16bpp formats
@@ -152,6 +127,46 @@ static uint32_t lvp_row_bytes(const struct display_capabilities *cap, uint16_t w
 		return pitch;
 	}
 }
+
+/*
+ * PANEL_PIXEL_FORMAT_* values are bit flags, not indices: MONO10 is (1 << 2) and
+ * ARGB_8888 is (1 << 3), so a plain comparison against one of them silently maps
+ * every other format to the same thing.
+ */
+/*
+ * Map the devicetree's PANEL_PIXEL_FORMAT_* value to the display API's enum.
+ *
+ * The bit values are written out rather than referenced through the macros:
+ * PANEL_PIXEL_FORMAT_* are bit flags, and using them inside a nested conditional
+ * inside a macro expands to something the preprocessor does not reduce to a
+ * constant, which silently mapped every format to the default.
+ *
+ * These numbers are part of the devicetree binding ABI (see
+ * include/zephyr/dt-bindings/display/panel.h), so they do not move.
+ */
+#define LVP_PANEL_MONO01    (1 << 1)  /* 2 */
+#define LVP_PANEL_MONO10    (1 << 2)  /* 4 */
+#define LVP_PANEL_ARGB8888  (1 << 3)  /* 8 */
+#define LVP_PANEL_RGB565    (1 << 4)  /* 16 */
+#define LVP_PANEL_RGB565X   (1 << 5)  /* 32 */
+#define LVP_PANEL_L8        (1 << 6)  /* 64 */
+#define LVP_PANEL_AL88      (1 << 7)  /* 128 */
+#define LVP_PANEL_XRGB8888  (1 << 8)  /* 256 */
+#define LVP_PANEL_BGR888    (1 << 9)  /* 512 */
+#define LVP_PANEL_RGB888    (1 << 0)  /* 1 */
+
+#define LVP_DT_PIXEL_FORMAT(fmt)                                                                   \
+	((fmt) == LVP_PANEL_MONO01   ? PIXEL_FORMAT_MONO01                                        \
+	 : (fmt) == LVP_PANEL_MONO10  ? PIXEL_FORMAT_MONO10                                        \
+	 : (fmt) == LVP_PANEL_L8      ? PIXEL_FORMAT_L_8                                           \
+	 : (fmt) == LVP_PANEL_AL88    ? PIXEL_FORMAT_AL_88                                         \
+	 : (fmt) == LVP_PANEL_RGB565  ? PIXEL_FORMAT_RGB_565                                       \
+	 : (fmt) == LVP_PANEL_RGB565X ? PIXEL_FORMAT_RGB_565X                                      \
+	 : (fmt) == LVP_PANEL_RGB888  ? PIXEL_FORMAT_RGB_888                                       \
+	 : (fmt) == LVP_PANEL_BGR888  ? PIXEL_FORMAT_BGR_888                                       \
+	 : (fmt) == LVP_PANEL_ARGB8888 ? PIXEL_FORMAT_ARGB_8888                                    \
+	 : (fmt) == LVP_PANEL_XRGB8888 ? PIXEL_FORMAT_XRGB_8888                                    \
+	 : PIXEL_FORMAT_MONO10)
 
 static enum lvp_format lvp_map_format(enum display_pixel_format pf)
 {
@@ -696,17 +711,22 @@ static int lvp_init(const struct device *dev)
 
 	data->panel = cfg->panel_override;
 
-	/*
-	 * A declared geometry means "emulate this panel". That is what the
-	 * generated overlay does, and in that case there is nothing to scan for:
-	 * on the simulator the only other display-class node is the SDL window,
-	 * which is not the panel the application targets and must not be adopted.
-	 *
-	 * With no declared geometry the sink is a pass-through, so it looks for
-	 * the panel it was placed in front of.
-	 */
-	if ((data->panel == NULL) && ((cfg->width == 0U) || (cfg->height == 0U))) {
-		data->panel = lvp_find_panel(dev);
+	if ((cfg->width == 0U) || (cfg->height == 0U)) {
+		/*
+		 * Geometry is required.
+		 *
+		 * The sink could try to discover the panel by scanning the display
+		 * class at runtime, but that scan references every display node,
+		 * including ones whose driver is not built, which fails to link.
+		 * Declaring the geometry is also more honest: the preview should be
+		 * told which panel it is emulating, not guess.
+		 *
+		 * The generated overlay always declares it, from the target board's
+		 * devicetree. For a project without a target board, state width and
+		 * height on the sink node.
+		 */
+		LVP_ERR("no width/height on the lvgl,preview-sink node");
+		return -EINVAL;
 	}
 
 	if (data->panel != NULL) {
@@ -734,24 +754,24 @@ static int lvp_init(const struct device *dev)
 		}
 	} else {
 		/*
-		 * Capture-only mode: no panel to mirror, so offer the formats
-		 * this sink can composite and let LVGL choose. Monochrome
-		 * vertical tiling is the SSD1306-family layout, which is also
-		 * what the preview host renders most faithfully.
+		 * Emulated panel: no driver to mirror, so the node's own description
+		 * is the hardware. The generated overlay fills it in from the target
+		 * board's devicetree, so this path is still board-derived rather than
+		 * hardcoded.
 		 */
-		if ((cfg->width == 0U) || (cfg->height == 0U)) {
-			LVP_ERR("no panel found and no width/height on the sink node; "
-				"set them on the lvgl,preview-sink node");
-			return -EINVAL;
-		}
-
 		data->cap.x_resolution = cfg->width;
 		data->cap.y_resolution = cfg->height;
-		data->cap.supported_pixel_formats = PIXEL_FORMAT_MONO01 | PIXEL_FORMAT_MONO10 |
-						    PIXEL_FORMAT_L_8 | PIXEL_FORMAT_RGB_565 |
-						    PIXEL_FORMAT_RGB_888 | PIXEL_FORMAT_ARGB_8888;
-		data->cap.current_pixel_format = PIXEL_FORMAT_MONO10;
-		data->cap.screen_info = SCREEN_INFO_MONO_VTILED | SCREEN_INFO_MONO_MSB_FIRST;
+		data->cap.current_pixel_format = cfg->pixel_format;
+		data->cap.screen_info = cfg->screen_info;
+		/*
+		 * Advertise the emulated format first so LVGL renders in the panel's
+		 * own depth instead of converting, and the rest so an application
+		 * that insists on a format still works.
+		 */
+		data->cap.supported_pixel_formats = cfg->pixel_format | PIXEL_FORMAT_MONO01 |
+						    PIXEL_FORMAT_MONO10 | PIXEL_FORMAT_L_8 |
+						    PIXEL_FORMAT_RGB_565 | PIXEL_FORMAT_RGB_888 |
+						    PIXEL_FORMAT_ARGB_8888;
 	}
 
 	capacity = lvp_capacity_for(&data->cap);
@@ -815,11 +835,8 @@ static int lvp_init(const struct device *dev)
 	static const struct lvp_config lvp_config_##inst = {                                       \
 		.width = DT_INST_PROP_OR(inst, width, 0),                                          \
 		.height = DT_INST_PROP_OR(inst, height, 0),                                        \
-		.pixel_format = (DT_INST_PROP_OR(inst, pixel_format,                             \
-						 PANEL_PIXEL_FORMAT_MONO10) ==                          \
-				 PANEL_PIXEL_FORMAT_MONO01)                                         \
-					? PIXEL_FORMAT_MONO01                                          \
-					: PIXEL_FORMAT_MONO10,                                    \
+		.pixel_format = LVP_DT_PIXEL_FORMAT(DT_INST_PROP_OR(inst, pixel_format,            \
+								   PANEL_PIXEL_FORMAT_MONO10)),    \
 		/*                                                                                 \
 		 * Default to the layout every 128x64 OLED controller uses: eight vertical         \
 		 * pixels per byte, bit 7 first. The generated overlay states this                 \

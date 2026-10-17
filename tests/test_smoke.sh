@@ -42,7 +42,7 @@ PY
 
 echo "== input reaches the application =="
 python3 -m lvgl_preview.cli drive "$here/examples/render-probe" \
-  --build-dir "$work/mono" -t frdm_mcxa156 --timeout 180 \
+  --build-dir "$work/drive" -t frdm_mcxa156 --timeout 180 \
   --keys 11,11 --settle 0.7 -o "$work/driven.png" --scale 4 | tee "$work/drive.log"
 
 # The probe echoes the raw key. 11 is INPUT_KEY_0, ASCII '0' == 48.
